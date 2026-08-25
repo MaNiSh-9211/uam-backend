@@ -1,6 +1,15 @@
-﻿# Real credentials â€” NEVER commit. Copy .env.example â†’ .env.dev locally.
+﻿# ==============================================================================
+# uam-backend/.gitignore
+# ==============================================================================
+
+# Credential files — never commit
+.env
 .env.dev
 .env.local
+.env.production
+
+# .env.example IS committed
+!.env.example
 
 # Node.js
 node_modules/
@@ -16,7 +25,7 @@ target/
 **/target/
 **/*.rs.bk
 
-# Logs & temp debug artifacts
+# Logs & debug artifacts
 *.log
 logs/
 curl_output.txt
@@ -31,5 +40,5 @@ Thumbs.db
 .idea/
 *.swp
 
-# Dev runtime data (demo-backend)
+# Runtime data
 data/users.json

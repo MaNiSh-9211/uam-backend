@@ -1,3 +1,4 @@
+import { shutdownTelemetry } from './otel'; // must be imported before express (side-effect init)
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -5,12 +6,13 @@ import cookieParser from 'cookie-parser';
 import passport from './config/passport';
 import { config } from './config';
 import { connectDatabase, disconnectDatabase, pingDatabase } from './config/database';
-import { connectRedis, closeRedis, pingRedisCache } from './config/redis';
+import { connectRedis, closeRedis, pingRedisCache, redisRateLimit } from './config/redis';
+import { assertDistributedRateLimitReady } from './middleware/limiter.middleware';
 import authRoutes from './routes/auth.routes';
 import migrationRoutes from './routes/migration.routes';
 import profileRoutes from './routes/profile.routes';
 import { metricsHandler, metricsMiddleware } from './metrics';
-import { apiLimiter, assertDistributedRateLimitReady } from './middleware/limiter.middleware';
+import { apiLimiter, authLimiter, loginLimiter, RateLimiterUnavailableError, type RateLimitResult } from './robustRateLimiter';
 import { warnIfInsecurePepper } from './utils/password.util';
 import { warnIfInsecureSecrets } from './utils/secrets.util';
 
@@ -37,20 +39,26 @@ function requireMetricsAuth(req: Request, res: Response, next: NextFunction): vo
 }
 
 // Probes and metrics scrapers do not send Origin — register before CORS.
-app.get('/health', (_req, res) => {
-    res.json({ status: 'ok', timestamp: new Date().toISOString() });
+app.get('/health', async (req, res) => {
+    const rateState = apiLimiter.getState();
+    res.json({
+      status: 'ok',
+      timestamp: new Date().toISOString(),
+      rateLimiting: rateState.redisAvailable ? 'distributed' : 'local fallback',
+      redis: rateState.redisAvailable ? 'connected' : 'fallback',
+    });
 });
 
-/** Readiness — MongoDB pool + Redis cache must answer before accepting traffic (K8s). */
+/** Readiness — Postgres pool + Redis cache must answer before accepting traffic (K8s). */
 app.get('/ready', async (_req, res) => {
-    const mongoOk = await pingDatabase();
+    const dbOk = await pingDatabase();
     const redisRequired = config.redis.enabled;
     const redisOk = redisRequired ? await pingRedisCache() : true;
 
-    if (mongoOk && redisOk) {
+    if (dbOk && redisOk) {
         res.json({
             status: 'ready',
-            mongodb: true,
+            postgres: true,
             redis: redisRequired ? true : 'disabled',
             timestamp: new Date().toISOString(),
         });
@@ -59,7 +67,7 @@ app.get('/ready', async (_req, res) => {
 
     res.status(503).json({
         status: 'not_ready',
-        mongodb: mongoOk,
+        postgres: dbOk,
         redis: redisRequired ? redisOk : 'disabled',
         timestamp: new Date().toISOString(),
     });
@@ -116,8 +124,90 @@ app.use(passport.initialize());
 
 app.use(metricsMiddleware);
 
-app.use('/api', apiLimiter);
+// ── Request logging (ADR-0060 privacy policy) ────────────────────────────────
+// NO client IP, NO User-Agent in logs. Each request prints one visually
+// separated block: start line, then completion line with status + latency.
+// Errors/exceptions print their message under the END line when status >= 400.
+let uamReqSeq = 0;
+app.use((req: Request, res: Response, next: NextFunction) => {
+    const rid = (req.headers['x-request-id'] as string) || `uam-${++uamReqSeq}`;
+    const start = Date.now();
+    console.log(`── REQ ${rid} ${req.method} ${req.originalUrl.split('?')[0]}`);
+    res.on('finish', () => {
+        const ms = Date.now() - start;
+        console.log(`└ END ${rid} status=${res.statusCode} ${ms}ms`);
+    });
+    next();
+});
+
+// Apply rate limiting per-path for flexibility
+// Distributed rate limiting via Redis — runtime failures degrade to local
+// memory ONLY when RATE_LIMIT_LOCAL_FALLBACK=1; with =0 the request fails
+// closed with 503 (fleet-wide limits are never silently weakened).
+app.use('/api/', async (req: Request, res: Response, next: NextFunction) => {
+    const clientId = req.ip || 'unknown';
+    let rateResult: RateLimitResult;
+    try {
+        rateResult = await apiLimiter.checkLimit(clientId);
+    } catch (err) {
+        if (err instanceof RateLimiterUnavailableError) {
+            return res.status(503).json({
+                error: 'Rate limiter unavailable',
+                retryAfter: new Date(Date.now() + 5000).toISOString(),
+            });
+        }
+        throw err;
+    }
+
+    if (!rateResult.allowed) {
+      return res.status(429).json({
+        error: 'Rate limit exceeded',
+        retryAfter: new Date(rateResult.resetAt).toISOString(),
+        limit: 'api',
+        remaining: rateResult.remaining,
+      });
+    }
+
+    // Add rate limit headers
+    res.setHeader('X-RateLimit-Remaining', rateResult.remaining.toString());
+    res.setHeader('X-RateLimit-Reset', rateResult.resetAt.toString());
+    res.setHeader('X-RateLimit-Limit', String(apiLimiter.getState().redisAvailable ? 'Distributed' : 'Local'));
+    next();
+});
+
 app.use('/api/auth', authRoutes);
+
+// Apply stricter auth rate limiting
+app.use('/api/auth/login', async (req: Request, res: Response, next: NextFunction) => {
+    const clientId = req.ip || 'unknown';
+    let rateResult: RateLimitResult;
+    try {
+        rateResult = await authLimiter.checkLimit(clientId);
+    } catch (err) {
+        if (err instanceof RateLimiterUnavailableError) {
+            return res.status(503).json({
+                error: 'Rate limiter unavailable',
+                retryAfter: new Date(Date.now() + 5000).toISOString(),
+            });
+        }
+        throw err;
+    }
+
+    if (!rateResult.allowed) {
+      return res.status(429).json({
+        error: 'Too many login attempts',
+        retryAfter: new Date(rateResult.resetAt).toISOString(),
+        limit: 'auth',
+        remaining: rateResult.remaining,
+      });
+    }
+
+    // Add rate limit headers
+    res.setHeader('X-RateLimit-Remaining', rateResult.remaining.toString());
+    res.setHeader('X-RateLimit-Reset', rateResult.resetAt.toString());
+    res.setHeader('X-RateLimit-Limit', '5');
+    next();
+});
 app.use('/api/auth/migrate', migrationRoutes);
 app.use('/api/auth/profile', profileRoutes);
 
@@ -126,7 +216,11 @@ app.use((req, res) => {
 });
 
 app.use((err: Error, req: express.Request, res: express.Response, next: express.NextFunction) => {
-    console.error('Error:', err);
+    const rid = (req as any)._rid || '-';
+    console.log(`└ END ${rid} status=500 exception=${err.name}: ${err.message}`);
+    if (config.nodeEnv !== 'production' && err.stack) {
+        console.log(err.stack.split('\n').slice(0, 4).join('\n'));
+    }
     const isCors = err.message === 'Not allowed by CORS';
     res.status(isCors ? 403 : 500).json({
         success: false,
@@ -137,11 +231,33 @@ app.use((err: Error, req: express.Request, res: express.Response, next: express.
 const startServer = async (): Promise<void> => {
     try {
         await connectDatabase();
-        await connectRedis();
-        assertDistributedRateLimitReady();
+
+        // Connect Redis — if unavailable, connectRedis will handle it
+        // assertDistributedRateLimitReady() will exit(1) if distributed limits required but Redis down
+        await assertDistributedRateLimitReady();
+
+        // Wire the rate-limit pool into the limiters (they are unusable without it)
+        if (!redisRateLimit) {
+            console.error('FATAL: Redis rate-limit pool unavailable — distributed limiting required');
+            process.exit(1);
+        }
+        apiLimiter.setRedisClient(redisRateLimit);
+        authLimiter.setRedisClient(redisRateLimit);
+        loginLimiter.setRedisClient(redisRateLimit);
+
+        // Initialize the limiter's own health flag (ping + fallback state);
+        // without this, /health reports "local fallback" even when Redis works.
+        await apiLimiter.init().catch(() => { /* strict mode exits inside init */ });
 
         const server = app.listen(config.port, '0.0.0.0', () => {
-            console.log(`UAM backend listening on :${config.port} (${config.nodeEnv})`);
+            console.log(`UAM backend listening on port ${config.port} (${config.nodeEnv})`);
+            const rateState = apiLimiter.getState();
+            const mode = rateState.redisAvailable
+                ? 'Distributed (Redis)'
+                : rateState.allowFallback
+                    ? 'Local fallback (memory)'
+                    : 'STRICT — Redis required, no local fallback';
+            console.log(`Rate limiting: ${mode}`);
         });
 
         const shutdown = async (signal: string) => {
@@ -149,6 +265,7 @@ const startServer = async (): Promise<void> => {
             server.close();
             await closeRedis();
             await disconnectDatabase();
+            await shutdownTelemetry();
             process.exit(0);
         };
 
