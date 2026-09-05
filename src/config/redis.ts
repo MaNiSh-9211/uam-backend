@@ -21,7 +21,7 @@ function buildRedisOptions(role: RedisRole): RedisOptions {
         port: redis.port,
         username: redis.username || undefined,
         password: redis.password || undefined,
-        tls: redis.tls ? { rejectUnauthorized: false, servername: redis.host } : undefined,
+        tls: redis.tls ? { rejectUnauthorized: true, servername: redis.host } : undefined,
         db: redis.db,
         connectionName: `uam-${role}`,
         lazyConnect: true,
@@ -70,8 +70,10 @@ function wireClientEvents(client: Redis, role: RedisRole, onReady: (ready: boole
 }
 
 function buildUrlClient(url: string, role: RedisRole): Redis {
+    const isTls = url.startsWith('rediss://');
     return new Redis(url, {
         connectionName: `uam-${role}`,
+        tls: isTls ? { rejectUnauthorized: true } : undefined,
         lazyConnect: true,
         enableReadyCheck: true,
         enableOfflineQueue: true,

@@ -71,7 +71,7 @@ function isDevStack(): boolean {
 
 function criticalProductionMisconfig(): string[] {
     const reasons: string[] = [];
-    if (isProduction() && config.security.autoVerifyEmail && !isDevStack()) {
+    if (isProduction() && config.security.autoVerifyEmail) {
         reasons.push('AUTO_VERIFY_EMAIL must not be enabled in production');
     }
     return reasons;

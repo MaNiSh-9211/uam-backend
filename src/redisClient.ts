@@ -40,7 +40,7 @@ function createRedisClient() {
     host: redisHost,
     port: redisPort,
     password: redisPassword || undefined,
-    tls: redisTls ? { rejectUnauthorized: false } : undefined,
+    tls: redisTls ? { rejectUnauthorized: true } : undefined,
     db: redisDb,
     maxRetriesPerRequest: parseInt(process.env.REDIS_MAX_RETRIES_PER_REQUEST || '3', 10),
     retryStrategy: (times: number) => Math.min(times * 200, 5_000),

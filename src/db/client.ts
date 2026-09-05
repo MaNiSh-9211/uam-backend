@@ -9,7 +9,7 @@ export const pool = new Pool({
     idleTimeoutMillis: config.postgres.pool.idleTimeoutMs,
     connectionTimeoutMillis: config.postgres.pool.connectTimeoutMs,
     ssl: config.postgres.ssl
-        ? { rejectUnauthorized: false }
+        ? { rejectUnauthorized: true }
         : undefined,
     application_name: config.postgres.appName,
 });
