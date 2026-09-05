@@ -4,26 +4,26 @@ import type { RedisOptions } from 'ioredis';
 function createRedisClient() {
   const redisHost = process.env.REDIS_HOST || 'localhost';
   const redisPort = parseInt(process.env.REDIS_PORT || '6379', 10);
-  const redisUsername = process.env.REDIS_USERNAME || undefined;
-  const redisPassword = process.env.REDIS_PASSWORD || undefined;
+  const redisUsername = process.env.REDIS_USERNAME || '';
+  const redisPassword = process.env.REDIS_PASSWORD || '';
   const redisTls = process.env.REDIS_TLS === 'true';
   const redisDb = parseInt(process.env.REDIS_DB || '0', 10);
 
-  // Build primary Redis URL
-  const primaryUrl = redisTls
-    ? `rediss://${redisUsername}:${redisPassword}@${redisHost}:${redisPort}`
-    : `redis://${redisUsername}:${redisPassword}@${redisHost}:${redisPort}`;
-
   const redisOptions: RedisOptions = {
+    host: redisHost,
+    port: redisPort,
+    password: redisPassword || undefined,
+    username: redisUsername || undefined,
+    tls: redisTls ? {} : undefined,
+    db: redisDb,
     maxRetriesPerRequest: parseInt(process.env.REDIS_MAX_RETRIES_PER_REQUEST || '3', 10),
     retryStrategy: (times: number) => Math.min(times * 200, 5_000),
     connectTimeout: parseInt(process.env.REDIS_CONNECT_TIMEOUT_MS || '10000', 10),
     commandTimeout: parseInt(process.env.REDIS_COMMAND_TIMEOUT_MS || '5000', 10),
     keepAlive: parseInt(process.env.REDIS_KEEPALIVE_MS || '30000', 10),
-    db: redisDb,
   };
 
-  const primaryRedis = new Redis(primaryUrl, redisOptions);
+  const primaryRedis = new Redis(redisOptions);
 
   primaryRedis.on('error', (err: Error) => {
     console.warn('Redis primary connection error:', err.message);
