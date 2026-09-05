@@ -3,10 +3,13 @@ import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { envBool, envInt } from './env.util';
 
-// .env = safe defaults (committed). .env.dev = secrets (gitignored), overrides when present.
-dotenv.config();
+// Load .env file only if running locally (not in production container)
+const isLocalEnv = process.env.NODE_ENV !== 'production';
+if (isLocalEnv) {
+    dotenv.config();
+}
 const devEnv = resolve(process.cwd(), '.env.dev');
-if (existsSync(devEnv)) {
+if (existsSync(devEnv) && isLocalEnv) {
     dotenv.config({ path: devEnv, override: true });
 }
 
@@ -16,12 +19,14 @@ export const config = {
 
     postgres: {
         url: process.env.DATABASE_URL || 'postgres://postgres:postgres@localhost:5432/uam',
-        ssl: process.env.PG_SSL === 'true',
+        ssl:
+            process.env.PG_SSL === '1'
+            || process.env.PG_SSL === 'true',
         pool: {
-            min: Number(process.env.PG_POOL_MIN) || 2,
-            max: Number(process.env.PG_POOL_MAX) || 10,
-            idleTimeoutMs: Number(process.env.PG_IDLE_TIMEOUT_MS) || 30_000,
-            connectTimeoutMs: Number(process.env.PG_CONNECT_TIMEOUT_MS) || 10_000,
+            min: envInt('PG_POOL_MIN', 2),
+            max: envInt('PG_POOL_MAX', 10),
+            idleTimeoutMs: envInt('PG_IDLE_TIMEOUT_MS', 30_000),
+            connectTimeoutMs: envInt('PG_CONNECT_TIMEOUT_MS', 10_000),
         },
         appName: process.env.PG_APP_NAME || 'uam-backend',
     },
@@ -53,7 +58,6 @@ export const config = {
     security: {
         passwordPepper: process.env.PASSWORD_PEPPER || '',
         defaultHomeRegion: process.env.DEFAULT_HOME_REGION || 'US',
-        // Dev/docker only — skip email verification gate (never enable in production).
         autoVerifyEmail:
             process.env.AUTO_VERIFY_EMAIL === '1'
             || process.env.AUTO_VERIFY_EMAIL === 'true',
@@ -89,7 +93,6 @@ export const config = {
     },
 
     auth: {
-        /** Browser clients use HttpOnly cookies; omit refresh from JSON (ADR-0055). */
         omitRefreshInBody:
             process.env.AUTH_OMIT_REFRESH_IN_BODY === '1'
             || process.env.AUTH_OMIT_REFRESH_IN_BODY === 'true',
@@ -112,7 +115,7 @@ export const config = {
             ),
     },
 
-    /** Control plane — publishes gateway access-token revocations (ADR-0039). */
+    /** Control plane - publishes gateway access-token revocations (ADR-0039). */
     controlPlane: {
         url: process.env.CONTROL_PLANE_URL || 'http://control-plane:8081',
         adminApiKey: process.env.ADMIN_API_KEY || 'CHANGE_ME_ADMIN_API_KEY',
