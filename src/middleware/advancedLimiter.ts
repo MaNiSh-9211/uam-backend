@@ -6,6 +6,16 @@ import { rateLimitConfig } from '../config/rateLimit.config';
 const memoryStore: Record<string, { count: number; resetTime: number; blockUntil: number }> = {};
 const LOGIN_PREFIX = 'login_attempt:';
 
+// Periodic cleanup of expired in-memory rate limit entries
+setInterval(() => {
+    const now = Date.now();
+    for (const [key, entry] of Object.entries(memoryStore)) {
+        if (entry.blockUntil && entry.blockUntil < now) {
+            delete memoryStore[key];
+        }
+    }
+}, 60_000).unref();
+
 function redisRequiredForLoginLimit(): boolean {
     return config.rateLimit.requireDistributed;
 }

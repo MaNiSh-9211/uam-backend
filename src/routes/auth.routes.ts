@@ -32,7 +32,6 @@ import {
     prepareOAuth,
     getOAuthProviders,
     redeemEmailLink,
-    getVerificationStatus,
     postVerificationStatus,
 } from '../controllers/auth.controller';
 
@@ -71,7 +70,6 @@ router.get('/csrf', getCsrfToken);
 router.get('/oauth/providers', getOAuthProviders);
 
 router.post('/check-email', emailCheckLimiter, validate(emailCheckSchema), checkEmailAvailability);
-router.get('/verification-status', emailCheckLimiter, getVerificationStatus);
 router.post('/verification-status', emailCheckLimiter, validate(verificationPollSchema), postVerificationStatus);
 
 router.post('/redeem-email-link', authLimiter, validate(redeemEmailLinkSchema), redeemEmailLink);

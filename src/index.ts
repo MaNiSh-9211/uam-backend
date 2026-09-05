@@ -40,14 +40,8 @@ function requireMetricsAuth(req: Request, res: Response, next: NextFunction): vo
 }
 
 // Probes and metrics scrapers do not send Origin — register before CORS.
-app.get('/health', async (req, res) => {
-    const rateState = apiLimiter.getState();
-    res.json({
-      status: 'ok',
-      timestamp: new Date().toISOString(),
-      rateLimiting: rateState.redisAvailable ? 'distributed' : 'local fallback',
-      redis: rateState.redisAvailable ? 'connected' : 'fallback',
-    });
+app.get('/health', async (_req, res) => {
+    res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
 /** Readiness — Postgres pool + Redis cache must answer before accepting traffic (K8s). */
@@ -105,7 +99,7 @@ app.use(
         credentials: true,
         methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
         allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin', 'X-CSRF-Token'],
-        exposedHeaders: ['Content-Type', 'Authorization'],
+        exposedHeaders: ['Content-Type'],
         preflightContinue: false,
         optionsSuccessStatus: 204,
     }),
