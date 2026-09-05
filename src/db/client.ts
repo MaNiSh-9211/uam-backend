@@ -18,8 +18,4 @@ pool.on('error', (err) => {
     console.error('PostgreSQL pool error:', err.message);
 });
 
-pool.on('connect', () => {
-    console.log('PostgreSQL driver pool ready');
-});
-
 export const db = drizzle(pool, { schema: { users, userIdentityIndexes } });

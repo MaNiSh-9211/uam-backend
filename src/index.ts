@@ -15,6 +15,7 @@ import { metricsHandler, metricsMiddleware } from './metrics';
 import { apiLimiter, authLimiter, loginLimiter, RateLimiterUnavailableError, type RateLimitResult } from './robustRateLimiter';
 import { warnIfInsecurePepper } from './utils/password.util';
 import { warnIfInsecureSecrets } from './utils/secrets.util';
+import { boot } from './utils/boot';
 
 warnIfInsecurePepper();
 warnIfInsecureSecrets();
@@ -132,10 +133,10 @@ let uamReqSeq = 0;
 app.use((req: Request, res: Response, next: NextFunction) => {
     const rid = (req.headers['x-request-id'] as string) || `uam-${++uamReqSeq}`;
     const start = Date.now();
-    console.log(`── REQ ${rid} ${req.method} ${req.originalUrl.split('?')[0]}`);
+    console.log(`-> ${rid} ${req.method} ${req.originalUrl.split('?')[0]}`);
     res.on('finish', () => {
         const ms = Date.now() - start;
-        console.log(`└ END ${rid} status=${res.statusCode} ${ms}ms`);
+        console.log(`<- ${rid} ${res.statusCode} ${ms}ms`);
     });
     next();
 });
@@ -231,39 +232,28 @@ app.use((err: Error, req: express.Request, res: express.Response, next: express.
 const startServer = async (): Promise<void> => {
     try {
         await connectDatabase();
-
-        // Connect Redis — if unavailable, continue with degraded mode
         await connectRedis();
-
-        // Check if distributed rate limiting is available (don't crash if not)
         await assertDistributedRateLimitReady();
 
-        // Wire the rate-limit pool into the limiters if available
-        if (redisRateLimit) {
-            apiLimiter.setRedisClient(redisRateLimit);
-            authLimiter.setRedisClient(redisRateLimit);
-            loginLimiter.setRedisClient(redisRateLimit);
-        } else {
-            console.warn('Redis rate-limit pool unavailable — using in-memory fallback');
+        if (!redisRateLimit) {
+            process.exit(1);
         }
-
-        // Initialize the limiter's own health flag (ping + fallback state);
-        // without this, /health reports "local fallback" even when Redis works.
-        await apiLimiter.init().catch(() => { /* strict mode exits inside init */ });
+        apiLimiter.setRedisClient(redisRateLimit);
+        authLimiter.setRedisClient(redisRateLimit);
+        loginLimiter.setRedisClient(redisRateLimit);
+        await apiLimiter.init().catch(() => {});
 
         const server = app.listen(config.port, '0.0.0.0', () => {
-            console.log(`UAM backend listening on port ${config.port} (${config.nodeEnv})`);
             const rateState = apiLimiter.getState();
-            const mode = rateState.redisAvailable
-                ? 'Distributed (Redis)'
-                : rateState.allowFallback
-                    ? 'Local fallback (memory)'
-                    : 'STRICT — Redis required, no local fallback';
-            console.log(`Rate limiting: ${mode}`);
+            const mode: 'distributed' | 'fallback' = rateState.redisAvailable
+                ? 'distributed'
+                : 'fallback';
+            boot.rateLimit(mode);
+            boot.flush();
         });
 
         const shutdown = async (signal: string) => {
-            console.log(`${signal} received — draining connections`);
+            console.log(`[shutdown] ${signal} received`);
             server.close();
             await closeRedis();
             await disconnectDatabase();
@@ -274,7 +264,7 @@ const startServer = async (): Promise<void> => {
         process.on('SIGTERM', () => void shutdown('SIGTERM'));
         process.on('SIGINT', () => void shutdown('SIGINT'));
     } catch (error) {
-        console.error('Failed to start server:', error);
+        console.error('[boot] failed to start:', error instanceof Error ? error.message : error);
         process.exit(1);
     }
 };

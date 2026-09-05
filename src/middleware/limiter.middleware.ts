@@ -9,8 +9,6 @@ const relaxAuthLimits = config.nodeEnv !== 'production' && (
     || process.env.UAM_RELAX_AUTH_LIMITS === 'true'
 );
 
-let storeModeLogged = false;
-
 /** Fail-closed store when Redis is down but distributed limits are required. */
 class FailClosedRateLimitStore implements Store {
     async increment(_key: string): Promise<{ totalHits: number; resetTime: Date }> {
@@ -50,7 +48,6 @@ class FallbackStore implements Store {
     private redisStore: RedisStore;
     private memoryStore: InMemoryRateLimitStore;
     private active: 'redis' | 'memory';
-    private loggedMode = false;
 
     constructor(prefix: string) {
         this.redisStore = new RedisStore({
@@ -78,19 +75,11 @@ class FallbackStore implements Store {
     private switchToMemory(reason: string): void {
         if (this.active !== 'memory') {
             this.active = 'memory';
-            console.warn(`⚠️ Redis rate-limit failed (${reason}) - falling back to in-memory`);
-        }
-    }
-
-    private logMode(): void {
-        if (!this.loggedMode) {
-            console.log(`⚡ Rate Limiting: ${this.active === 'redis' ? 'Redis' : 'in-memory'} store`);
-            this.loggedMode = true;
+            console.warn(`[rate-limit] fallback to in-memory (Redis: ${reason})`);
         }
     }
 
     async increment(key: string) {
-        this.logMode();
         if (this.active === 'redis' && isRedisRateLimitAvailable()) {
             try {
                 return await this.redisStore.increment(key);
@@ -120,26 +109,16 @@ const getStore = (prefix: string): Store | undefined => {
     if (config.redis.enabled && redisRateLimit) {
         return new FallbackStore(prefix);
     }
-
-    if (!storeModeLogged) {
-        console.log('⚠️ Rate Limiting: in-memory store (Redis unavailable or disabled)');
-        storeModeLogged = true;
-    }
     return new InMemoryRateLimitStore();
 };
 
 /** Warn if production expects fleet-wide limits but Redis rate-limit pool is down. */
 export function assertDistributedRateLimitReady(): void {
     if (!config.rateLimit.requireDistributed) return;
-    if (!config.redis.enabled) {
-        console.warn('⚠️ UAM_REQUIRE_DISTRIBUTED_RATE_LIMIT set but REDIS_ENABLED=false - using in-memory fallback');
+    if (!config.redis.enabled || !isRedisRateLimitAvailable()) {
+        console.warn('[boot] distributed rate limiting required but Redis unavailable');
         return;
     }
-    if (!isRedisRateLimitAvailable()) {
-        console.warn('⚠️ Redis rate-limit pool not ready - using in-memory fallback');
-        return;
-    }
-    console.log('✅ Distributed rate limiting ready (Redis)');
 }
 // General API Limiter - 1000 requests per minute (very generous for development)
 export const apiLimiter = rateLimit({

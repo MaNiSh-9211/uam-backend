@@ -1,5 +1,6 @@
 import Redis, { RedisOptions } from 'ioredis';
 import { config } from './index';
+import { boot } from '../utils/boot';
 import {
     redisCircuitBreaker,
     withCircuitBreaker,
@@ -49,21 +50,18 @@ function buildRedisOptions(role: RedisRole): RedisOptions {
 function wireClientEvents(client: Redis, role: RedisRole, onReady: (ready: boolean) => void): void {
     client.on('ready', () => {
         onReady(true);
-        console.log(`✅ Redis (${role}) ready`);
     });
 
     client.on('connect', () => {
-        console.log(`Redis (${role}) TCP connected`);
+        // silent — boot summary covers this
     });
 
     client.on('error', (err) => {
         onReady(false);
-        console.error(`❌ Redis (${role}) error:`, err.message);
     });
 
     client.on('close', () => {
         onReady(false);
-        console.log(`⚠️ Redis (${role}) connection closed`);
     });
 
     client.on('reconnecting', () => {
@@ -87,14 +85,12 @@ function buildUrlClient(url: string, role: RedisRole): Redis {
 
 function createClients(): void {
     if (!config.redis.enabled) {
-        console.log('ℹ️ Redis is disabled in configuration');
         return;
     }
 
     const redisUrl = process.env.REDIS_URL;
 
     if (redisUrl) {
-        console.log('ℹ️ Using REDIS_URL for connections');
         redisCache = buildUrlClient(redisUrl, 'cache');
         wireClientEvents(redisCache, 'cache', (ready) => { cacheReady = ready; });
 
@@ -134,6 +130,8 @@ async function ensureRedisConnected(client: Redis): Promise<void> {
 export const connectRedis = async (): Promise<void> => {
     if (!config.redis.enabled || !redisCache || !redisRateLimit) return;
 
+    const viaUrl = Boolean(process.env.REDIS_URL);
+
     try {
         await Promise.all([
             ensureRedisConnected(redisCache),
@@ -142,10 +140,9 @@ export const connectRedis = async (): Promise<void> => {
         await Promise.all([redisCache.ping(), redisRateLimit.ping()]);
         cacheReady = true;
         rateLimitReady = true;
-        console.log('✅ Redis pools connected (cache + ratelimit)');
+        boot.redis('cache', true, viaUrl);
+        boot.redis('ratelimit', true, viaUrl);
     } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        console.log('⚠️ Redis not available, continuing with degraded mode:', message);
         cacheReady = false;
         rateLimitReady = false;
     }
@@ -162,7 +159,6 @@ export const closeRedis = async (): Promise<void> => {
     await Promise.all(closes);
     cacheReady = false;
     rateLimitReady = false;
-    console.log('Redis pools closed');
 };
 
 export const pingRedisCache = async (): Promise<boolean> => {
