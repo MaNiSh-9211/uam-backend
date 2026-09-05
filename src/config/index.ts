@@ -12,18 +12,16 @@ if (existsSync(devEnv)) {
 
 export const config = {
     port: parseInt(process.env.PORT || '8080', 10),
-    nodeEnv: process.env.NODE_ENV || 'development',
+    nodeEnv: process.env.NODE_ENV || 'production',
 
     postgres: {
         url: process.env.DATABASE_URL || 'postgres://postgres:postgres@localhost:5432/uam',
-        ssl:
-            process.env.PG_SSL === '1'
-            || process.env.PG_SSL === 'true',
+        ssl: process.env.PG_SSL === 'true',
         pool: {
-            min: envInt('PG_POOL_MIN', 2),
-            max: envInt('PG_POOL_MAX', 10),
-            idleTimeoutMs: envInt('PG_IDLE_TIMEOUT_MS', 30_000),
-            connectTimeoutMs: envInt('PG_CONNECT_TIMEOUT_MS', 10_000),
+            min: Number(process.env.PG_POOL_MIN) || 2,
+            max: Number(process.env.PG_POOL_MAX) || 10,
+            idleTimeoutMs: Number(process.env.PG_IDLE_TIMEOUT_MS) || 30_000,
+            connectTimeoutMs: Number(process.env.PG_CONNECT_TIMEOUT_MS) || 10_000,
         },
         appName: process.env.PG_APP_NAME || 'uam-backend',
     },

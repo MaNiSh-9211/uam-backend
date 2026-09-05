@@ -1,34 +1,21 @@
 import { Pool } from 'pg';
+import * as fs from 'node:fs';
 import { drizzle } from 'drizzle-orm/node-postgres';
-import { config } from '../config';
 import { users, userIdentityIndexes } from './schema';
 
-/**
- * PostgreSQL connection layer (replaces MongoDB/mongoose).
- *
- * Design:
- * - A single `pg` Pool per process (connectionString from DATABASE_URL).
- * - A Drizzle client built over the same pool for typed queries.
- * - A tiny hand-rolled migration runner (no drizzle-kit / external tooling)
- *   so `npm run build && npm start` works without a separate migrate step.
- *
- * SSL: Aiven free tier requires TLS. The server cert chain is self-signed
- * (not verifiable against public roots), so we use `rejectUnauthorized: false`.
- * For a fully managed instance where the root CA is trusted, flip PG_SSL_CERT.
- */
 export const pool = new Pool({
-    connectionString: config.postgres.url,
-    max: config.postgres.pool.max,
-    idleTimeoutMillis: config.postgres.pool.idleTimeoutMs,
-    connectionTimeoutMillis: config.postgres.pool.connectTimeoutMs,
-    ssl: config.postgres.ssl
-        ? { rejectUnauthorized: false }
+    connectionString: process.env.DATABASE_URL,
+    max: Number(process.env.PG_POOL_MAX) || 10,
+    idleTimeoutMillis: Number(process.env.PG_IDLE_TIMEOUT_MS) || 30_000,
+    connectionTimeoutMillis: Number(process.env.PG_CONNECT_TIMEOUT_MS) || 10_000,
+    ssl: process.env.PG_SSL === 'true'
+        ? { rejectUnauthorized: false, ca: fs.readFileSync('/app/ca.crt') }
         : undefined,
-    application_name: config.postgres.appName,
+    application_name: process.env.PG_APP_NAME || 'uam-backend',
 });
 
 pool.on('error', (err) => {
-    console.error('❌ PostgreSQL pool error:', err.message);
+    console.error('PostgreSQL pool error:', err.message);
 });
 
 pool.on('connect', () => {
