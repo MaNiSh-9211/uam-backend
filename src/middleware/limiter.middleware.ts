@@ -45,14 +45,15 @@ class InMemoryRateLimitStore implements Store {
     }
 }
 
-// Each limiter needs its own RedisStore prefix so counters do not collide on the same IP key.
-const getStore = (prefix: string): Store | undefined => {
-    if (config.redis.enabled && redisRateLimit) {
-        if (!storeModeLogged) {
-            console.log('⚡ Rate Limiting: Redis Store (distributed across UAM replicas)');
-            storeModeLogged = true;
-        }
-        return new RedisStore({
+/** Proxy store that uses Redis when available, falls back to in-memory on Redis failure. */
+class FallbackStore implements Store {
+    private redisStore: RedisStore;
+    private memoryStore: InMemoryRateLimitStore;
+    private active: 'redis' | 'memory';
+    private loggedMode = false;
+
+    constructor(prefix: string) {
+        this.redisStore = new RedisStore({
             prefix,
             sendCommand: async (...args: string[]) => {
                 try {
@@ -60,15 +61,64 @@ const getStore = (prefix: string): Store | undefined => {
                         return (redisRateLimit as any).call(...args);
                     });
                     if (!res.ok) {
-                        console.warn(`Redis circuit ${res.outcome} - allowing request`);
+                        this.switchToMemory(`${res.outcome}`);
                         return '1' as any;
                     }
                     return res.value;
-                } catch {
+                } catch (e) {
+                    this.switchToMemory(e instanceof Error ? e.message : String(e));
                     return '1' as any;
                 }
             },
         });
+        this.memoryStore = new InMemoryRateLimitStore();
+        this.active = isRedisRateLimitAvailable() ? 'redis' : 'memory';
+    }
+
+    private switchToMemory(reason: string): void {
+        if (this.active !== 'memory') {
+            this.active = 'memory';
+            console.warn(`⚠️ Redis rate-limit failed (${reason}) - falling back to in-memory`);
+        }
+    }
+
+    private logMode(): void {
+        if (!this.loggedMode) {
+            console.log(`⚡ Rate Limiting: ${this.active === 'redis' ? 'Redis' : 'in-memory'} store`);
+            this.loggedMode = true;
+        }
+    }
+
+    async increment(key: string) {
+        this.logMode();
+        if (this.active === 'redis' && isRedisRateLimitAvailable()) {
+            try {
+                return await this.redisStore.increment(key);
+            } catch {
+                this.switchToMemory('increment failed');
+            }
+        }
+        return this.memoryStore.increment(key);
+    }
+
+    async decrement(key: string) {
+        if (this.active === 'redis' && isRedisRateLimitAvailable()) {
+            try { await this.redisStore.decrement(key); } catch { /* use memory */ }
+        }
+        return this.memoryStore.decrement(key);
+    }
+
+    async resetKey(key: string) {
+        if (this.active === 'redis' && isRedisRateLimitAvailable()) {
+            try { await this.redisStore.resetKey(key); } catch { /* use memory */ }
+        }
+        return this.memoryStore.resetKey(key);
+    }
+}
+
+const getStore = (prefix: string): Store | undefined => {
+    if (config.redis.enabled && redisRateLimit) {
+        return new FallbackStore(prefix);
     }
 
     if (!storeModeLogged) {
