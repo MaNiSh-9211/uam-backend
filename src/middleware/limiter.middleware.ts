@@ -54,16 +54,19 @@ const getStore = (prefix: string): Store | undefined => {
         }
         return new RedisStore({
             prefix,
-            sendCommand: (...args: string[]) => {
-                return runRateLimitCommand(() => {
-                    return (redisRateLimit as any).call(...args);
-                }).then((res) => {
+            sendCommand: async (...args: string[]) => {
+                try {
+                    const res = await runRateLimitCommand(() => {
+                        return (redisRateLimit as any).call(...args);
+                    });
                     if (!res.ok) {
-                        console.warn(`Redis circuit ${res.outcome} - falling back to in-memory`);
-                        throw new Error(`redis circuit ${res.outcome}`);
+                        console.warn(`Redis circuit ${res.outcome} - allowing request`);
+                        return '1' as any;
                     }
                     return res.value;
-                }) as any;
+                } catch {
+                    return '1' as any;
+                }
             },
         });
     }

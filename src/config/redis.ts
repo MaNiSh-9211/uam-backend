@@ -71,22 +71,42 @@ function wireClientEvents(client: Redis, role: RedisRole, onReady: (ready: boole
     });
 }
 
+function buildUrlClient(url: string, role: RedisRole): Redis {
+    return new Redis(url, {
+        connectionName: `uam-${role}`,
+        lazyConnect: true,
+        enableReadyCheck: true,
+        enableOfflineQueue: true,
+        maxRetriesPerRequest: config.redis.maxRetriesPerRequest,
+        connectTimeout: config.redis.connectTimeoutMs,
+        commandTimeout: config.redis.commandTimeoutMs,
+        keepAlive: config.redis.keepAliveMs,
+        retryStrategy: (times) => Math.min(times * 200, 5_000),
+    });
+}
+
 function createClients(): void {
     if (!config.redis.enabled) {
         console.log('ℹ️ Redis is disabled in configuration');
         return;
     }
 
-    redisCache = new Redis(buildRedisOptions('cache'));
-    wireClientEvents(redisCache, 'cache', (ready) => {
-        cacheReady = ready;
-    });
+    const redisUrl = process.env.REDIS_URL;
 
-    // Dedicated connection for rate limiting — isolates counter churn from auth cache latency.
-    redisRateLimit = new Redis(buildRedisOptions('ratelimit'));
-    wireClientEvents(redisRateLimit, 'ratelimit', (ready) => {
-        rateLimitReady = ready;
-    });
+    if (redisUrl) {
+        console.log('ℹ️ Using REDIS_URL for connections');
+        redisCache = buildUrlClient(redisUrl, 'cache');
+        wireClientEvents(redisCache, 'cache', (ready) => { cacheReady = ready; });
+
+        redisRateLimit = buildUrlClient(redisUrl, 'ratelimit');
+        wireClientEvents(redisRateLimit, 'ratelimit', (ready) => { rateLimitReady = ready; });
+    } else {
+        redisCache = new Redis(buildRedisOptions('cache'));
+        wireClientEvents(redisCache, 'cache', (ready) => { cacheReady = ready; });
+
+        redisRateLimit = new Redis(buildRedisOptions('ratelimit'));
+        wireClientEvents(redisRateLimit, 'ratelimit', (ready) => { rateLimitReady = ready; });
+    }
 }
 
 createClients();
