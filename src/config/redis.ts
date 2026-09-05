@@ -20,7 +20,7 @@ function buildRedisOptions(role: RedisRole): RedisOptions {
         port: redis.port,
         username: redis.username || undefined,
         password: redis.password || undefined,
-        tls: redis.tls ? { servername: redis.host, rejectUnauthorized: false } : undefined,
+        tls: redis.tls ? { rejectUnauthorized: false, servername: redis.host } : undefined,
         db: redis.db,
         connectionName: `uam-${role}`,
         lazyConnect: true,

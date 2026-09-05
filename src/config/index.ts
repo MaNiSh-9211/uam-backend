@@ -31,20 +31,44 @@ export const config = {
         appName: process.env.PG_APP_NAME || 'uam-backend',
     },
 
-    redis: {
-        enabled: process.env.REDIS_ENABLED !== 'false',
-        host: process.env.REDIS_HOST || 'localhost',
-        port: parseInt(process.env.REDIS_PORT || '6379', 10),
-        username: process.env.REDIS_USERNAME || undefined,
-        password: process.env.REDIS_PASSWORD || '',
-        tls: process.env.REDIS_TLS === 'true',
-        db: envInt('REDIS_DB', 0),
-        connectTimeoutMs: envInt('REDIS_CONNECT_TIMEOUT_MS', 10_000),
-        commandTimeoutMs: envInt('REDIS_COMMAND_TIMEOUT_MS', 5_000),
-        keepAliveMs: envInt('REDIS_KEEPALIVE_MS', 30_000),
-        maxRetriesPerRequest: envInt('REDIS_MAX_RETRIES_PER_REQUEST', 3),
-        maxReconnectAttempts: envInt('REDIS_MAX_RECONNECT_ATTEMPTS', 20),
-    },
+    redis: (() => {
+        const redisUrl = process.env.REDIS_URL;
+        if (redisUrl) {
+            try {
+                const url = new URL(redisUrl);
+                return {
+                    enabled: true,
+                    host: url.hostname,
+                    port: parseInt(url.port || '6379', 10),
+                    username: url.username || undefined,
+                    password: url.password || '',
+                    tls: url.protocol === 'rediss:',
+                    db: envInt('REDIS_DB', 0),
+                    connectTimeoutMs: envInt('REDIS_CONNECT_TIMEOUT_MS', 10_000),
+                    commandTimeoutMs: envInt('REDIS_COMMAND_TIMEOUT_MS', 5_000),
+                    keepAliveMs: envInt('REDIS_KEEPALIVE_MS', 30_000),
+                    maxRetriesPerRequest: envInt('REDIS_MAX_RETRIES_PER_REQUEST', 3),
+                    maxReconnectAttempts: envInt('REDIS_MAX_RECONNECT_ATTEMPTS', 20),
+                };
+            } catch {
+                console.warn('⚠️ Invalid REDIS_URL, falling back to individual env vars');
+            }
+        }
+        return {
+            enabled: process.env.REDIS_ENABLED !== 'false',
+            host: process.env.REDIS_HOST || 'localhost',
+            port: parseInt(process.env.REDIS_PORT || '6379', 10),
+            username: process.env.REDIS_USERNAME || undefined,
+            password: process.env.REDIS_PASSWORD || '',
+            tls: process.env.REDIS_TLS === 'true',
+            db: envInt('REDIS_DB', 0),
+            connectTimeoutMs: envInt('REDIS_CONNECT_TIMEOUT_MS', 10_000),
+            commandTimeoutMs: envInt('REDIS_COMMAND_TIMEOUT_MS', 5_000),
+            keepAliveMs: envInt('REDIS_KEEPALIVE_MS', 30_000),
+            maxRetriesPerRequest: envInt('REDIS_MAX_RETRIES_PER_REQUEST', 3),
+            maxReconnectAttempts: envInt('REDIS_MAX_RECONNECT_ATTEMPTS', 20),
+        };
+    })(),
 
     jwt: {
         accessSecret: process.env.JWT_ACCESS_SECRET || 'default-access-secret',
