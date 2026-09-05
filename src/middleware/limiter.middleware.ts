@@ -66,16 +66,16 @@ const getStore = (prefix: string): Store | undefined => {
     return undefined;
 };
 
-/** Abort boot if production expects fleet-wide limits but Redis rate-limit pool is down. */
+/** Warn if production expects fleet-wide limits but Redis rate-limit pool is down. */
 export function assertDistributedRateLimitReady(): void {
     if (!config.rateLimit.requireDistributed) return;
     if (!config.redis.enabled) {
-        console.error('FATAL: UAM_REQUIRE_DISTRIBUTED_RATE_LIMIT set but REDIS_ENABLED=false');
-        process.exit(1);
+        console.warn('WARNING: UAM_REQUIRE_DISTRIBUTED_RATE_LIMIT set but REDIS_ENABLED=false — falling back to in-memory limits');
+        return;
     }
     if (!isRedisRateLimitAvailable()) {
-        console.error('FATAL: Redis rate-limit pool not ready — distributed limits require Redis');
-        process.exit(1);
+        console.warn('WARNING: Redis rate-limit pool not ready — distributed limits required but falling back to in-memory');
+        return;
     }
     console.log('✅ Distributed rate limiting ready (Redis)');
 }

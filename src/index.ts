@@ -232,18 +232,20 @@ const startServer = async (): Promise<void> => {
     try {
         await connectDatabase();
 
-        // Connect Redis — if unavailable, connectRedis will handle it
-        // assertDistributedRateLimitReady() will exit(1) if distributed limits required but Redis down
+        // Connect Redis — if unavailable, continue with degraded mode
+        await connectRedis();
+
+        // Check if distributed rate limiting is available (don't crash if not)
         await assertDistributedRateLimitReady();
 
-        // Wire the rate-limit pool into the limiters (they are unusable without it)
-        if (!redisRateLimit) {
-            console.error('FATAL: Redis rate-limit pool unavailable — distributed limiting required');
-            process.exit(1);
+        // Wire the rate-limit pool into the limiters if available
+        if (redisRateLimit) {
+            apiLimiter.setRedisClient(redisRateLimit);
+            authLimiter.setRedisClient(redisRateLimit);
+            loginLimiter.setRedisClient(redisRateLimit);
+        } else {
+            console.warn('Redis rate-limit pool unavailable — using in-memory fallback');
         }
-        apiLimiter.setRedisClient(redisRateLimit);
-        authLimiter.setRedisClient(redisRateLimit);
-        loginLimiter.setRedisClient(redisRateLimit);
 
         // Initialize the limiter's own health flag (ping + fallback state);
         // without this, /health reports "local fallback" even when Redis works.
