@@ -1,7 +1,7 @@
 import { Pool } from 'pg';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { users, userIdentityIndexes } from './schema';
-import { config } from './config';
+import { config } from '../config';
 
 export const pool = new Pool({
     connectionString: config.postgres.url,
