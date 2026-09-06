@@ -36,7 +36,13 @@ function rejectDistributedLimitUnavailable(res: Response): void {
  * (`requireDistributed`), in-memory fallback otherwise.
  */
 export const advancedLoginLimiter = async (req: Request, res: Response, next: NextFunction) => {
-    const ip = req.ip;
+    const forwardedFor = req.headers['x-forwarded-for'];
+    const cfConnectingIp = req.headers['cf-connecting-ip'];
+    const realIp = req.headers['x-real-ip'];
+    const ip = (cfConnectingIp as string) ||
+               (realIp as string) ||
+               ((forwardedFor as string)?.split(',')[0]?.trim()) ||
+               req.ip;
     const { email } = req.body;
     const key = `${LOGIN_PREFIX}${ip}_${email || 'unknown'}`;
     const now = Date.now();

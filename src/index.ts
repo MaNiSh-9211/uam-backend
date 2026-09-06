@@ -24,6 +24,22 @@ const app = express();
 
 app.set('trust proxy', 1);
 
+// Extract real client IP from gateway/Cloudflare headers before rate limiting
+app.use((req: Request, _res: Response, next: NextFunction) => {
+    const forwardedFor = req.headers['x-forwarded-for'];
+    const cfConnectingIp = req.headers['cf-connecting-ip'];
+    const realIp = req.headers['x-real-ip'];
+    const clientIp = (cfConnectingIp as string) ||
+                     (realIp as string) ||
+                     ((forwardedFor as string)?.split(',')[0]?.trim());
+    if (clientIp) {
+        (req as any).realIp = clientIp;
+        // Override req.ip for downstream middleware that uses it directly
+        req.ip = clientIp;
+    }
+    next();
+});
+
 function requireMetricsAuth(req: Request, res: Response, next: NextFunction): void {
     const token = config.metricsToken;
     if (!token) {
@@ -140,7 +156,15 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 // memory ONLY when RATE_LIMIT_LOCAL_FALLBACK=1; with =0 the request fails
 // closed with 503 (fleet-wide limits are never silently weakened).
 app.use('/api/', async (req: Request, res: Response, next: NextFunction) => {
-    const clientId = req.ip || 'unknown';
+    // Gateway forwards real client IP via these headers
+    const forwardedFor = req.headers['x-forwarded-for'];
+    const cfConnectingIp = req.headers['cf-connecting-ip'];
+    const realIp = req.headers['x-real-ip'];
+    const clientId = (cfConnectingIp as string) ||
+                     (realIp as string) ||
+                     ((forwardedFor as string)?.split(',')[0]?.trim()) ||
+                     req.ip ||
+                     'unknown';
     let rateResult: RateLimitResult;
     try {
         rateResult = await apiLimiter.checkLimit(clientId);
@@ -174,7 +198,14 @@ app.use('/api/auth', authRoutes);
 
 // Apply stricter auth rate limiting
 app.use('/api/auth/login', async (req: Request, res: Response, next: NextFunction) => {
-    const clientId = req.ip || 'unknown';
+    const forwardedFor = req.headers['x-forwarded-for'];
+    const cfConnectingIp = req.headers['cf-connecting-ip'];
+    const realIp = req.headers['x-real-ip'];
+    const clientId = (cfConnectingIp as string) ||
+                     (realIp as string) ||
+                     ((forwardedFor as string)?.split(',')[0]?.trim()) ||
+                     req.ip ||
+                     'unknown';
     let rateResult: RateLimitResult;
     try {
         rateResult = await authLimiter.checkLimit(clientId);
