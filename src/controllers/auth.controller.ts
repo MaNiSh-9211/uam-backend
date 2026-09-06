@@ -307,9 +307,6 @@ export const login = async (req: Request, res: Response): Promise<void> => {
             user.loginCount = 1;
         }
 
-        // Success - Reset Rate Limit
-        await resetLoginAttempts(req);
-
         // Update login stats
         user.lastLogin = new Date();
 
