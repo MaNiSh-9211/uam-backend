@@ -34,8 +34,6 @@ app.use((req: Request, _res: Response, next: NextFunction) => {
                      ((forwardedFor as string)?.split(',')[0]?.trim());
     if (clientIp) {
         (req as any).realIp = clientIp;
-        // Override req.ip for downstream middleware that uses it directly
-        req.ip = clientIp;
     }
     next();
 });
@@ -156,15 +154,7 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 // memory ONLY when RATE_LIMIT_LOCAL_FALLBACK=1; with =0 the request fails
 // closed with 503 (fleet-wide limits are never silently weakened).
 app.use('/api/', async (req: Request, res: Response, next: NextFunction) => {
-    // Gateway forwards real client IP via these headers
-    const forwardedFor = req.headers['x-forwarded-for'];
-    const cfConnectingIp = req.headers['cf-connecting-ip'];
-    const realIp = req.headers['x-real-ip'];
-    const clientId = (cfConnectingIp as string) ||
-                     (realIp as string) ||
-                     ((forwardedFor as string)?.split(',')[0]?.trim()) ||
-                     req.ip ||
-                     'unknown';
+    const clientId = (req as any).realIp || req.ip || 'unknown';
     let rateResult: RateLimitResult;
     try {
         rateResult = await apiLimiter.checkLimit(clientId);
@@ -198,14 +188,7 @@ app.use('/api/auth', authRoutes);
 
 // Apply stricter auth rate limiting
 app.use('/api/auth/login', async (req: Request, res: Response, next: NextFunction) => {
-    const forwardedFor = req.headers['x-forwarded-for'];
-    const cfConnectingIp = req.headers['cf-connecting-ip'];
-    const realIp = req.headers['x-real-ip'];
-    const clientId = (cfConnectingIp as string) ||
-                     (realIp as string) ||
-                     ((forwardedFor as string)?.split(',')[0]?.trim()) ||
-                     req.ip ||
-                     'unknown';
+    const clientId = (req as any).realIp || req.ip || 'unknown';
     let rateResult: RateLimitResult;
     try {
         rateResult = await authLimiter.checkLimit(clientId);
